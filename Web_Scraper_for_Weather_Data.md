@@ -1,36 +1,79 @@
----
-title: "Weather Scraper"
-author: "Michael Mazel"
-date: "1/30/2021"
-output: rmarkdown::github_document
----
+Weather Scraper
+================
+Michael Mazel
+1/30/2021
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
-```{r}
+``` r
 library(XML)
 library(dplyr)
+```
+
+    ## 
+    ## Attaching package: 'dplyr'
+
+    ## The following objects are masked from 'package:stats':
+    ## 
+    ##     filter, lag
+
+    ## The following objects are masked from 'package:base':
+    ## 
+    ##     intersect, setdiff, setequal, union
+
+``` r
 library(tidyr)
 library(stringi)
 library(rvest)
+```
+
+    ## Loading required package: xml2
+
+    ## 
+    ## Attaching package: 'rvest'
+
+    ## The following object is masked from 'package:XML':
+    ## 
+    ##     xml
+
+``` r
 library(RCurl) 
+```
+
+    ## 
+    ## Attaching package: 'RCurl'
+
+    ## The following object is masked from 'package:tidyr':
+    ## 
+    ##     complete
+
+``` r
 library(lubridate)
+```
+
+    ## 
+    ## Attaching package: 'lubridate'
+
+    ## The following objects are masked from 'package:base':
+    ## 
+    ##     date, intersect, setdiff, union
+
+``` r
 library(weathermetrics)
 library(openxlsx)
 library(dotenv)
 ```
 
-
 # Using the MESONET API, we will be scraping weather data by the hour for a given month
+
 Example URL to parse:
-https://api.synopticdata.com/v2/stations/timeseries?stid=ktpa&start=202012012353&end=202012012353&vars=air_temp&output=xml&token=your_token_here  
-We will insert the MO_DAY and TIME variables using the month_scraper function below.  
-Structure of each URL: PRE MO_DAY TIME MID MO_DAY TIME POST TOKEN.   
-First, we will create variables to store the PRE MID POST and TOKEN.
-The weather variables we will retrieve include air_temp, relative_humidity, and a general weather_summary.
-```{r}
+<https://api.synopticdata.com/v2/stations/timeseries?stid=ktpa&start=202012012353&end=202012012353&vars=air_temp&output=xml&token=your_token_here>  
+We will insert the MO\_DAY and TIME variables using the month\_scraper
+function below.  
+Structure of each URL: PRE MO\_DAY TIME MID MO\_DAY TIME POST TOKEN.  
+First, we will create variables to store the PRE MID POST and TOKEN. The
+weather variables we will retrieve include air\_temp,
+relative\_humidity, and a general weather\_summary.
+
+``` r
 PRE <- "https://api.synopticdata.com/v2/stations/timeseries?stid=ktpa&start=" #ktpa is the code for Tampa Int Airport
 MID <- "&end="
 POST <- "&vars=air_temp,relative_humidity,weather_summary&output=xml&token="
@@ -39,8 +82,7 @@ load_dot_env()
 TOKEN = Sys.getenv("token") # My token to use the API is hidden. Insert your token here
 ```
 
-
-```{r}
+``` r
 month_scraper <- function(month, year){
   # create a base df to add observations. Note, the column names don't matter yet and will be distorted in the scraping process 
   df <- data.frame(date_time=character(),air_temp=integer(),relative_humidity=integer(),weather_summary=character(),stringsAsFactors=FALSE)
@@ -111,29 +153,42 @@ month_scraper <- function(month, year){
 }
 ```
 
-Use the month_scraper function for Feb 2021
-```{r}
+Use the month\_scraper function for Feb 2021
+
+``` r
 Feb21 <- month_scraper(2,2021)
 weather <- Feb21
 # The Tampa station for this month returned 528 values, but we expected 672 (28 days x 24 hours). The API often has null values. This can be compensated by looking at other minutes close to the desired one. We will not do that here however
 ```
 
 Example if scraping multiple months:
-```{r}
+
+``` r
 # Feb21 <- month_scraper(2,2021)
 # Mar21 <- month_scraper(3,2021)
 # weather <- rbind(Feb21,Mar21)
 ```
 
-```{r}
+``` r
 # rename columns
 weather <- weather %>% rename(date_time = 1, temp = 2, humidity = 3, weather_summary = 4)
 
 head(weather)
 ```
 
-Now, we will clean up our data frame by changing the time zone, converting the temp to F, and filtering out minutes and seconds from date_time
-```{r}
+    ##              date_time temp humidity weather_summary
+    ## 1 2021-02-07T00:53:00Z 20.0    89.96           clear
+    ## 2 2021-02-07T01:53:00Z 20.0    89.96          broken
+    ## 3 2021-02-07T02:53:00Z 20.0    89.96          broken
+    ## 4 2021-02-07T03:53:00Z 20.0    89.96        overcast
+    ## 5 2021-02-07T04:53:00Z 20.0    89.96        overcast
+    ## 6 2021-02-07T05:53:00Z 20.0    89.96        overcast
+
+Now, we will clean up our data frame by changing the time zone,
+converting the temp to F, and filtering out minutes and seconds from
+date\_time
+
+``` r
 # reformat date_time so we can convert to America/New_York time
 substr(weather$date_time, 11, 11) <- " "
 weather$date_time = substr(weather$date_time,1,nchar(weather$date_time)-1)
@@ -150,16 +205,40 @@ weather$date_time <- substr(weather$date_time,1,nchar(weather$date_time)-6)
 head(weather)
 ```
 
-Let's see unique values from the weather summary column
-```{r}
+    ##       date_time temp humidity weather_summary
+    ## 1 2021-02-06 19   68    89.96           clear
+    ## 2 2021-02-06 20   68    89.96          broken
+    ## 3 2021-02-06 21   68    89.96          broken
+    ## 4 2021-02-06 22   68    89.96        overcast
+    ## 5 2021-02-06 23   68    89.96        overcast
+    ## 6 2021-02-07 00   68    89.96        overcast
+
+Let’s see unique values from the weather summary column
+
+``` r
 weather$weather_summary %>% unique()
 ```
-The weather_summary variable includes information about cloud coverage and precipitation.  We will create a new column specifically for cloud coverage.  
 
-Some terms like clear, thin scattered, overcast directly identify the percent of the sky covered. We will convert these to its percent value.
+    ##  [1] "clear"                        "broken"                      
+    ##  [3] "overcast"                     "mist"                        
+    ##  [5] "light rain/thunderstorm,mist" "scattered"                   
+    ##  [7] "thin scattered"               "fog"                         
+    ##  [9] "light rain"                   "thunder,light rain,mist"     
+    ## [11] "light rain,mist"              "thunder,light rain"          
+    ## [13] "rain,mist"
 
-Other terms include precipitation info such as mist or heavy rain. These also have an approximate cloud coverage percent we can use. I researched the approximate percentages to use.
-```{r}
+The weather\_summary variable includes information about cloud coverage
+and precipitation. We will create a new column specifically for cloud
+coverage.
+
+Some terms like clear, thin scattered, overcast directly identify the
+percent of the sky covered. We will convert these to its percent value.
+
+Other terms include precipitation info such as mist or heavy rain. These
+also have an approximate cloud coverage percent we can use. I researched
+the approximate percentages to use.
+
+``` r
 weather <- weather %>% mutate(cloud_cover = weather$weather_summary)
 
 weather$cloud_cover[weather$cloud_cover == "clear"] <- 0
@@ -182,8 +261,13 @@ weather$cloud_cover[weather$cloud_cover == "haze"] <- 45
 weather$cloud_cover <- as.numeric(weather$cloud_cover)
 ```
 
-We will create a new column for precipitation. We will convert to the approximate precipitation rate in mm/hr. This may not be exactly what was measured from the API, but it should be close
-```{r}
+    ## Warning: NAs introduced by coercion
+
+We will create a new column for precipitation. We will convert to the
+approximate precipitation rate in mm/hr. This may not be exactly what
+was measured from the API, but it should be close
+
+``` r
 weather$precip[weather$weather_summary == "light drizzle"] <- 1
 weather$precip[weather$weather_summary == "light rain"] <- 1.25
 weather$precip[weather$weather_summary == "light rain,mist"] <- 1.5
@@ -197,16 +281,25 @@ weather$precip[weather$weather_summary == "thin scattered"] <- 0
 weather$precip[weather$weather_summary == "scattered"] <- 0
 weather$precip[weather$weather_summary == "broken"] <- 0
 weather$precip[weather$weather_summary == "overcast"] <- 0
-
 ```
 
-Create a heat index column. This is calculated from the air temperature and humidity
-```{r}
+Create a heat index column. This is calculated from the air temperature
+and humidity
+
+``` r
 weather$humidity <- as.numeric(weather$humidity)
 weather <- weather %>% 
 mutate(heat_index = heat.index(t = weather$temp,rh = weather$humidity, temperature.metric = 'fahrenheit', output.metric = 'fahrenheit', round = 1))
 ```
 
-```{r}
+``` r
 head(weather)
 ```
+
+    ##       date_time temp humidity weather_summary cloud_cover precip heat_index
+    ## 1 2021-02-06 19   68    89.96           clear           0      0       68.7
+    ## 2 2021-02-06 20   68    89.96          broken          75      0       68.7
+    ## 3 2021-02-06 21   68    89.96          broken          75      0       68.7
+    ## 4 2021-02-06 22   68    89.96        overcast         100      0       68.7
+    ## 5 2021-02-06 23   68    89.96        overcast         100      0       68.7
+    ## 6 2021-02-07 00   68    89.96        overcast         100      0       68.7
