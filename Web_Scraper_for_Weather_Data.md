@@ -74,23 +74,23 @@ weather variables we will retrieve include air\_temp,
 relative\_humidity, and a general weather\_summary.
 
 ``` r
-PRE <- "https://api.synopticdata.com/v2/stations/timeseries?stid=ktpa&start=" #ktpa is the code for Tampa Int Airport
+PRE <- "https://api.synopticdata.com/v2/stations/timeseries?stid=ktpa&start="
+#ktpa is the station ID for Tampa International Airport
 MID <- "&end="
 POST <- "&vars=air_temp,relative_humidity,weather_summary&output=xml&token="
-
 load_dot_env()
 TOKEN = Sys.getenv("token") # My token to use the API is hidden. Insert your token here
 ```
 
 ``` r
 month_scraper <- function(month, year){
-  # create a base df to add observations. Note, the column names don't matter yet and will be distorted in the scraping process 
+  # create a base df to add observations 
   df <- data.frame(date_time=character(),air_temp=integer(),relative_humidity=integer(),weather_summary=character(),stringsAsFactors=FALSE)
   
   # set default days in a month to 31 days
-  days_in_month <-31
   # create a list of months with 30 days and update the appropriate months
   # update February for leap/non-leap years
+  days_in_month <-31
   days_30 <- c(4,6,9,11)
   days_28_29 <- 2
   if (is.element(month, days_30)){
@@ -104,11 +104,12 @@ month_scraper <- function(month, year){
   }
   
   # make every month a 2 digit string by adding a 0 if necessary
+  # adjust "from=1" if you want to start scraping on a day other than the first of the month
   month <- toString(month)
   if (stri_length(month) == 1) {
     month <- paste("0",month,sep="")
     }
-  for (day in seq(from=7, to=days_in_month)){
+  for (day in seq(from=1, to=days_in_month)){
   day <- toString(day)
   
   # make every day a 2 digit string by adding a 0 if necessary
@@ -130,7 +131,7 @@ month_scraper <- function(month, year){
       # now we will filter for only numbers that are real times (military time). E.g. 1230, 0245, 1800, 2359
       if ((((substr(time, 1, 1)  == "0") | (substr(time, 1, 1)  == "1")) | ((substr(time, 1, 1)  == "2") & (substr(time, 2, 2) < "4"))) & (substr(time, 3, 3)  < "6")){
         
-        # create URL based off for-loops
+        # create the URL based off the for-loop "month" and "day" values
         mo_day <- paste(month, day, sep = "")
         combined <-(paste(PRE,year, mo_day,time,MID,year,mo_day,time,POST,TOKEN,sep = ""))
         link_tool <- getURL(combined)
@@ -149,17 +150,27 @@ month_scraper <- function(month, year){
       }
     }
   }
+  # rename columns
+df <- df %>% rename(date_time = 1, temp = 2, humidity = 3, weather_summary = 4)
   return(df)
 }
 ```
 
-Use the month\_scraper function for Feb 2021
+Use the month\_scraper function for Feb 2021.
 
 ``` r
 Feb21 <- month_scraper(2,2021)
 weather <- Feb21
-# The Tampa station for this month returned 528 values, but we expected 672 (28 days x 24 hours). The API often has null values. This can be compensated by looking at other minutes close to the desired one. We will not do that here however
+head(weather)
 ```
+
+    ##              date_time temp humidity weather_summary
+    ## 1 2021-02-01T00:53:00Z 20.0    81.33          broken
+    ## 2 2021-02-01T01:53:00Z 20.0    83.95        overcast
+    ## 3 2021-02-01T02:53:00Z 20.0    83.95          broken
+    ## 4 2021-02-01T03:53:00Z 20.0    83.95        overcast
+    ## 5 2021-02-01T04:53:00Z 19.4    90.49 light rain,mist
+    ## 6 2021-02-01T05:53:00Z 19.4    93.37 light rain,mist
 
 Example if scraping multiple months:
 
@@ -169,30 +180,15 @@ Example if scraping multiple months:
 # weather <- rbind(Feb21,Mar21)
 ```
 
-``` r
-# rename columns
-weather <- weather %>% rename(date_time = 1, temp = 2, humidity = 3, weather_summary = 4)
-
-head(weather)
-```
-
-    ##              date_time temp humidity weather_summary
-    ## 1 2021-02-07T00:53:00Z 20.0    89.96           clear
-    ## 2 2021-02-07T01:53:00Z 20.0    89.96          broken
-    ## 3 2021-02-07T02:53:00Z 20.0    89.96          broken
-    ## 4 2021-02-07T03:53:00Z 20.0    89.96        overcast
-    ## 5 2021-02-07T04:53:00Z 20.0    89.96        overcast
-    ## 6 2021-02-07T05:53:00Z 20.0    89.96        overcast
-
 Now, we will clean up our data frame by changing the time zone,
 converting the temp to F, and filtering out minutes and seconds from
-date\_time
+date\_time.
 
 ``` r
 # reformat date_time so we can convert to America/New_York time
 substr(weather$date_time, 11, 11) <- " "
 weather$date_time = substr(weather$date_time,1,nchar(weather$date_time)-1)
-weather$date_time <- force_tzs(ymd_hms(weather$date_time), tzones = "UTC", tzone_out = "America/New_York") # due to this conversion, a few hours at the end of the month will not be scraped
+weather$date_time <- force_tzs(ymd_hms(weather$date_time), tzones = "UTC", tzone_out = "America/New_York") # due to the time conversion, a few hours at the end of the month will not be scraped. We will also scrape a few hours from the prior month
 
 # Convert temp to fahrenheit
 weather$temp <- as.numeric(weather$temp)
@@ -206,37 +202,34 @@ head(weather)
 ```
 
     ##       date_time temp humidity weather_summary
-    ## 1 2021-02-06 19   68    89.96           clear
-    ## 2 2021-02-06 20   68    89.96          broken
-    ## 3 2021-02-06 21   68    89.96          broken
-    ## 4 2021-02-06 22   68    89.96        overcast
-    ## 5 2021-02-06 23   68    89.96        overcast
-    ## 6 2021-02-07 00   68    89.96        overcast
+    ## 1 2021-01-31 19 68.0    81.33          broken
+    ## 2 2021-01-31 20 68.0    83.95        overcast
+    ## 3 2021-01-31 21 68.0    83.95          broken
+    ## 4 2021-01-31 22 68.0    83.95        overcast
+    ## 5 2021-01-31 23 66.9    90.49 light rain,mist
+    ## 6 2021-02-01 00 66.9    93.37 light rain,mist
 
-Let’s see unique values from the weather summary column
+Let’s see unique values from the weather summary column.
 
 ``` r
 weather$weather_summary %>% unique()
 ```
 
-    ##  [1] "clear"                        "broken"                      
-    ##  [3] "overcast"                     "mist"                        
-    ##  [5] "light rain/thunderstorm,mist" "scattered"                   
-    ##  [7] "thin scattered"               "fog"                         
-    ##  [9] "light rain"                   "thunder,light rain,mist"     
-    ## [11] "light rain,mist"              "thunder,light rain"          
-    ## [13] "rain,mist"
+    ##  [1] "broken"                       "overcast"                    
+    ##  [3] "light rain,mist"              "scattered"                   
+    ##  [5] "thin scattered"               "clear"                       
+    ##  [7] "mist"                         "haze"                        
+    ##  [9] "light rain/thunderstorm,mist" "fog"                         
+    ## [11] "light rain"                   "thunder,light rain,mist"     
+    ## [13] "thunder,light rain"           "rain,mist"
 
 The weather\_summary variable includes information about cloud coverage
 and precipitation. We will create a new column specifically for cloud
-coverage.
-
-Some terms like clear, thin scattered, overcast directly identify the
-percent of the sky covered. We will convert these to its percent value.
-
-Other terms include precipitation info such as mist or heavy rain. These
-also have an approximate cloud coverage percent we can use. I researched
-the approximate percentages to use.
+coverage. Some terms like clear, thin scattered, overcast directly
+identify the percent of the sky covered. We will convert these to its
+percent value. Other terms include precipitation info, such as mist or
+heavy rain. These also have an approximate cloud coverage percent we can
+use. I researched the approximate percentages.
 
 ``` r
 weather <- weather %>% mutate(cloud_cover = weather$weather_summary)
@@ -265,7 +258,7 @@ weather$cloud_cover <- as.numeric(weather$cloud_cover)
 
 We will create a new column for precipitation. We will convert to the
 approximate precipitation rate in mm/hr. This may not be exactly what
-was measured from the API, but it should be close
+was measured from the API, but it should be close.
 
 ``` r
 weather$precip[weather$weather_summary == "light drizzle"] <- 1
@@ -284,7 +277,7 @@ weather$precip[weather$weather_summary == "overcast"] <- 0
 ```
 
 Create a heat index column. This is calculated from the air temperature
-and humidity
+and humidity.
 
 ``` r
 weather$humidity <- as.numeric(weather$humidity)
@@ -293,13 +286,31 @@ mutate(heat_index = heat.index(t = weather$temp,rh = weather$humidity, temperatu
 ```
 
 ``` r
-head(weather)
+head(weather,24)
 ```
 
-    ##       date_time temp humidity weather_summary cloud_cover precip heat_index
-    ## 1 2021-02-06 19   68    89.96           clear           0      0       68.7
-    ## 2 2021-02-06 20   68    89.96          broken          75      0       68.7
-    ## 3 2021-02-06 21   68    89.96          broken          75      0       68.7
-    ## 4 2021-02-06 22   68    89.96        overcast         100      0       68.7
-    ## 5 2021-02-06 23   68    89.96        overcast         100      0       68.7
-    ## 6 2021-02-07 00   68    89.96        overcast         100      0       68.7
+    ##        date_time temp humidity weather_summary cloud_cover precip heat_index
+    ## 1  2021-01-31 19 68.0    81.33          broken          75    0.0       68.3
+    ## 2  2021-01-31 20 68.0    83.95        overcast         100    0.0       68.4
+    ## 3  2021-01-31 21 68.0    83.95          broken          75    0.0       68.4
+    ## 4  2021-01-31 22 68.0    83.95        overcast         100    0.0       68.4
+    ## 5  2021-01-31 23 66.9    90.49 light rain,mist         100    1.5       67.5
+    ## 6  2021-02-01 00 66.9    93.37 light rain,mist         100    1.5       67.7
+    ## 7  2021-02-01 01 66.9    93.37        overcast         100    0.0       67.7
+    ## 8  2021-02-01 02 66.9    93.37        overcast         100    0.0       67.7
+    ## 9  2021-02-01 03 66.0    87.08        overcast         100    0.0       66.4
+    ## 10 2021-02-01 04 64.9    84.29        overcast         100    0.0       65.1
+    ## 11 2021-02-01 05 64.0    83.69        overcast         100    0.0       64.0
+    ## 12 2021-02-01 06 62.1    80.37        overcast         100    0.0       61.8
+    ## 13 2021-02-01 07 61.0    69.89       scattered          45    0.0       60.1
+    ## 14 2021-02-01 08 61.0    64.50          broken          75    0.0       59.8
+    ## 15 2021-02-01 09 61.0    64.50          broken          75    0.0       59.8
+    ## 16 2021-02-01 10 60.1    57.36          broken          75    0.0       58.5
+    ## 17 2021-02-01 11 60.1    55.42          broken          75    0.0       58.4
+    ## 18 2021-02-01 12 55.9    64.30        overcast         100    0.0       54.2
+    ## 19 2021-02-01 13 53.1    73.90        overcast         100    0.0       51.6
+    ## 20 2021-02-01 14 54.0    64.04        overcast         100    0.0       52.1
+    ## 21 2021-02-01 15 53.1    60.88        overcast         100    0.0       51.0
+    ## 22 2021-02-01 16 53.1    60.88        overcast         100    0.0       51.0
+    ## 23 2021-02-01 17 52.0    61.16          broken          75    0.0       49.8
+    ## 24 2021-02-01 18 52.0    58.63        overcast         100    0.0       49.7

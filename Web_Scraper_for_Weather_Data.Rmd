@@ -31,10 +31,10 @@ Structure of each URL: PRE MO_DAY TIME MID MO_DAY TIME POST TOKEN.
 First, we will create variables to store the PRE MID POST and TOKEN.
 The weather variables we will retrieve include air_temp, relative_humidity, and a general weather_summary.
 ```{r}
-PRE <- "https://api.synopticdata.com/v2/stations/timeseries?stid=ktpa&start=" #ktpa is the code for Tampa Int Airport
+PRE <- "https://api.synopticdata.com/v2/stations/timeseries?stid=ktpa&start="
+#ktpa is the station ID for Tampa International Airport
 MID <- "&end="
 POST <- "&vars=air_temp,relative_humidity,weather_summary&output=xml&token="
-
 load_dot_env()
 TOKEN = Sys.getenv("token") # My token to use the API is hidden. Insert your token here
 ```
@@ -42,13 +42,13 @@ TOKEN = Sys.getenv("token") # My token to use the API is hidden. Insert your tok
 
 ```{r}
 month_scraper <- function(month, year){
-  # create a base df to add observations. Note, the column names don't matter yet and will be distorted in the scraping process 
+  # create a base df to add observations 
   df <- data.frame(date_time=character(),air_temp=integer(),relative_humidity=integer(),weather_summary=character(),stringsAsFactors=FALSE)
   
   # set default days in a month to 31 days
-  days_in_month <-31
   # create a list of months with 30 days and update the appropriate months
   # update February for leap/non-leap years
+  days_in_month <-31
   days_30 <- c(4,6,9,11)
   days_28_29 <- 2
   if (is.element(month, days_30)){
@@ -62,11 +62,12 @@ month_scraper <- function(month, year){
   }
   
   # make every month a 2 digit string by adding a 0 if necessary
+  # adjust "from=1" if you want to start scraping on a day other than the first of the month
   month <- toString(month)
   if (stri_length(month) == 1) {
     month <- paste("0",month,sep="")
     }
-  for (day in seq(from=7, to=days_in_month)){
+  for (day in seq(from=1, to=days_in_month)){
   day <- toString(day)
   
   # make every day a 2 digit string by adding a 0 if necessary
@@ -88,7 +89,7 @@ month_scraper <- function(month, year){
       # now we will filter for only numbers that are real times (military time). E.g. 1230, 0245, 1800, 2359
       if ((((substr(time, 1, 1)  == "0") | (substr(time, 1, 1)  == "1")) | ((substr(time, 1, 1)  == "2") & (substr(time, 2, 2) < "4"))) & (substr(time, 3, 3)  < "6")){
         
-        # create URL based off for-loops
+        # create the URL based off the for-loop "month" and "day" values
         mo_day <- paste(month, day, sep = "")
         combined <-(paste(PRE,year, mo_day,time,MID,year,mo_day,time,POST,TOKEN,sep = ""))
         link_tool <- getURL(combined)
@@ -107,15 +108,17 @@ month_scraper <- function(month, year){
       }
     }
   }
+  # rename columns
+df <- df %>% rename(date_time = 1, temp = 2, humidity = 3, weather_summary = 4)
   return(df)
 }
 ```
 
-Use the month_scraper function for Feb 2021
+Use the month_scraper function for Feb 2021.
 ```{r}
 Feb21 <- month_scraper(2,2021)
 weather <- Feb21
-# The Tampa station for this month returned 528 values, but we expected 672 (28 days x 24 hours). The API often has null values. This can be compensated by looking at other minutes close to the desired one. We will not do that here however
+head(weather)
 ```
 
 Example if scraping multiple months:
@@ -125,19 +128,12 @@ Example if scraping multiple months:
 # weather <- rbind(Feb21,Mar21)
 ```
 
-```{r}
-# rename columns
-weather <- weather %>% rename(date_time = 1, temp = 2, humidity = 3, weather_summary = 4)
-
-head(weather)
-```
-
-Now, we will clean up our data frame by changing the time zone, converting the temp to F, and filtering out minutes and seconds from date_time
+Now, we will clean up our data frame by changing the time zone, converting the temp to F, and filtering out minutes and seconds from date_time.
 ```{r}
 # reformat date_time so we can convert to America/New_York time
 substr(weather$date_time, 11, 11) <- " "
 weather$date_time = substr(weather$date_time,1,nchar(weather$date_time)-1)
-weather$date_time <- force_tzs(ymd_hms(weather$date_time), tzones = "UTC", tzone_out = "America/New_York") # due to this conversion, a few hours at the end of the month will not be scraped
+weather$date_time <- force_tzs(ymd_hms(weather$date_time), tzones = "UTC", tzone_out = "America/New_York") # due to the time conversion, a few hours at the end of the month will not be scraped. We will also scrape a few hours from the prior month
 
 # Convert temp to fahrenheit
 weather$temp <- as.numeric(weather$temp)
@@ -150,15 +146,11 @@ weather$date_time <- substr(weather$date_time,1,nchar(weather$date_time)-6)
 head(weather)
 ```
 
-Let's see unique values from the weather summary column
+Let's see unique values from the weather summary column.
 ```{r}
 weather$weather_summary %>% unique()
 ```
-The weather_summary variable includes information about cloud coverage and precipitation.  We will create a new column specifically for cloud coverage.  
-
-Some terms like clear, thin scattered, overcast directly identify the percent of the sky covered. We will convert these to its percent value.
-
-Other terms include precipitation info such as mist or heavy rain. These also have an approximate cloud coverage percent we can use. I researched the approximate percentages to use.
+The weather_summary variable includes information about cloud coverage and precipitation.  We will create a new column specifically for cloud coverage. Some terms like clear, thin scattered, overcast directly identify the percent of the sky covered. We will convert these to its percent value. Other terms include precipitation info, such as mist or heavy rain. These also have an approximate cloud coverage percent we can use. I researched the approximate percentages.
 ```{r}
 weather <- weather %>% mutate(cloud_cover = weather$weather_summary)
 
@@ -182,7 +174,7 @@ weather$cloud_cover[weather$cloud_cover == "haze"] <- 45
 weather$cloud_cover <- as.numeric(weather$cloud_cover)
 ```
 
-We will create a new column for precipitation. We will convert to the approximate precipitation rate in mm/hr. This may not be exactly what was measured from the API, but it should be close
+We will create a new column for precipitation. We will convert to the approximate precipitation rate in mm/hr. This may not be exactly what was measured from the API, but it should be close.
 ```{r}
 weather$precip[weather$weather_summary == "light drizzle"] <- 1
 weather$precip[weather$weather_summary == "light rain"] <- 1.25
@@ -200,7 +192,7 @@ weather$precip[weather$weather_summary == "overcast"] <- 0
 
 ```
 
-Create a heat index column. This is calculated from the air temperature and humidity
+Create a heat index column. This is calculated from the air temperature and humidity.
 ```{r}
 weather$humidity <- as.numeric(weather$humidity)
 weather <- weather %>% 
@@ -208,5 +200,5 @@ mutate(heat_index = heat.index(t = weather$temp,rh = weather$humidity, temperatu
 ```
 
 ```{r}
-head(weather)
+head(weather,24)
 ```
